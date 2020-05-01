@@ -32,7 +32,7 @@ Example 1:
 postgres=# select txid_current_snapshot();
  txid_current_snapshot
 -----------------------
- 661:661:
+ 704:704:
 (1 row)
 
 postgres=# begin;
@@ -53,43 +53,42 @@ postgres=# insert into bdt values(1);
 INSERT 0 1
 postgres=# rollback to savepoint b;
 ROLLBACK
-
-postgres=# select * from pg_subtrans_infos(661);                                                                         [30/1802]
- xid |   status    | parent_xid | top_parent_xid | commit_timestamp
------+-------------+------------+----------------+------------------
- 661 | in progress |            |                |
+postgres=# select * from pg_subtrans_infos(704);
+ xid |   status    | parent_xid | top_parent_xid | sub_level | commit_timestamp
+-----+-------------+------------+----------------+-----------+------------------
+ 704 | in progress |            |                |           |
 (1 row)
 
-postgres=# select * from pg_subtrans_infos(662);
- xid |   status    | parent_xid | top_parent_xid | commit_timestamp
------+-------------+------------+----------------+------------------
- 662 | in progress |        661 |            661 |
+postgres=# select * from pg_subtrans_infos(705);
+ xid |   status    | parent_xid | top_parent_xid | sub_level | commit_timestamp
+-----+-------------+------------+----------------+-----------+------------------
+ 705 | in progress |        704 |            704 |         1 |
 (1 row)
 
-postgres=# select * from pg_subtrans_infos(663);
- xid | status  | parent_xid | top_parent_xid | commit_timestamp
------+---------+------------+----------------+------------------
- 663 | aborted |        662 |            661 |
+postgres=# select * from pg_subtrans_infos(706);
+ xid | status  | parent_xid | top_parent_xid | sub_level | commit_timestamp
+-----+---------+------------+----------------+-----------+------------------
+ 706 | aborted |        705 |            704 |         2 |
 (1 row)
 
-postgres=# select * from pg_subtrans_infos(664);
- xid | status  | parent_xid | top_parent_xid | commit_timestamp
------+---------+------------+----------------+------------------
- 664 | aborted |        663 |            661 |
+postgres=# select * from pg_subtrans_infos(707);
+ xid | status  | parent_xid | top_parent_xid | sub_level | commit_timestamp
+-----+---------+------------+----------------+-----------+------------------
+ 707 | aborted |        706 |            704 |         3 |
+(1 row)
 
 postgres=# commit;
 COMMIT
-
-postgres=# select * from pg_subtrans_infos(661);
- xid |  status   | parent_xid | top_parent_xid |       commit_timestamp
------+-----------+------------+----------------+------------------------------
- 661 | committed |            |                | 2020-05-01 10:04:06.62758+00
+postgres=# select * from pg_subtrans_infos(704);
+ xid |  status   | parent_xid | top_parent_xid | sub_level |       commit_timestamp
+-----+-----------+------------+----------------+-----------+-------------------------------
+ 704 | committed |            |                |           | 2020-05-01 14:41:29.652714+00
 (1 row)
 
-postgres=# select * from pg_subtrans_infos(662);
- xid |  status   | parent_xid | top_parent_xid |       commit_timestamp
------+-----------+------------+----------------+------------------------------
- 662 | committed |        661 |                | 2020-05-01 10:04:06.62758+00
+postgres=# select * from pg_subtrans_infos(705);
+ xid |  status   | parent_xid | top_parent_xid | sub_level |       commit_timestamp
+-----+-----------+------------+----------------+-----------+-------------------------------
+ 705 | committed |        704 |                |           | 2020-05-01 14:41:29.652714+00
 (1 row)
 ```
 
@@ -105,19 +104,19 @@ select
         (select status from pg_subtrans_infos(pgl.transactionid::text::bigint)) as "xid status",
         (select parent_xid from pg_subtrans_infos(pgl.transactionid::text::bigint)),
         (select top_parent_xid from pg_subtrans_infos(pgl.transactionid::text::bigint)),
-        (select xid from pg_subtrans_infos(pgl.transactionid::text::bigint)) - (select top_parent_xid from pg_subtrans_infos(pgl.transactionid::text::bigint)) sublevel,
+        (select sub_level from pg_subtrans_infos(pgl.transactionid::text::bigint)) sub_level,
         (select commit_timestamp from pg_subtrans_infos(pgl.transactionid::text::bigint))
 from
 (select * from pg_locks where transactionid is not null) pgl
 order by 4;
 
 postgres=# \i lock_and_subtrans_infos.sql
-  pid  |   locktype    |     mode      | xid | xid status  | parent_xid | top_parent_xid | sublevel | commit_timestamp
--------+---------------+---------------+-----+-------------+------------+----------------+----------+------------------
- 11145 | transactionid | ExclusiveLock | 673 | in progress |            |                |          |
- 11145 | transactionid | ExclusiveLock | 674 | in progress |        673 |            673 |        1 |
- 11145 | transactionid | ExclusiveLock | 675 | in progress |        674 |            673 |        2 |
- 11145 | transactionid | ExclusiveLock | 676 | in progress |        675 |            673 |        3 |
+  pid  |   locktype    |     mode      | xid | xid status  | parent_xid | top_parent_xid | sub_level | commit_timestamp
+-------+---------------+---------------+-----+-------------+------------+----------------+-----------+------------------
+ 13735 | transactionid | ExclusiveLock | 712 | in progress |            |                |           |
+ 13735 | transactionid | ExclusiveLock | 713 | in progress |        712 |            712 |         1 |
+ 13735 | transactionid | ExclusiveLock | 714 | in progress |        713 |            712 |         2 |
+ 13735 | transactionid | ExclusiveLock | 715 | in progress |        714 |            712 |         3 |
 (4 rows)
 ```
 

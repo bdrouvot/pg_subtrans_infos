@@ -4,6 +4,7 @@ CREATE FUNCTION pg_subtrans_infos(
 	OUT status text,
 	OUT parent_xid integer,
 	OUT top_parent_xid integer,
+	OUT sub_level integer,
 	OUT commit_timestamp timestamptz)
 RETURNS SETOF RECORD
 AS 'MODULE_PATHNAME','pg_subtrans_infos'

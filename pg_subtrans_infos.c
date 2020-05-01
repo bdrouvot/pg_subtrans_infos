@@ -16,6 +16,40 @@ Datum pg_subtrans_infos(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1(pg_subtrans_infos);
 
 /*
+ * See subtrans.c
+ */
+static TransactionId
+get_top_parent(TransactionId xid, int *sublevel)
+{
+        TransactionId parentXid = xid,
+                                previousXid = xid;
+
+        /* Can't ask about stuff that might not be around anymore */
+        Assert(TransactionIdFollowsOrEquals(xid, TransactionXmin));
+
+        while (TransactionIdIsValid(parentXid))
+        {
+                previousXid = parentXid;
+                if (TransactionIdPrecedes(parentXid, TransactionXmin))
+                        break;
+                parentXid = SubTransGetParent(parentXid);
+		(*sublevel)++;
+
+                /*
+                 * By convention the parent xid gets allocated first, so should always
+                 * precede the child xid. Anything else points to a corrupted data
+                 * structure that could lead to an infinite loop, so exit.
+                 */
+                if (!TransactionIdPrecedes(parentXid, previousXid))
+                        elog(ERROR, "pg_subtrans contains invalid entry: xid %u points to parent xid %u",
+                                 previousXid, parentXid);
+        }
+
+        Assert(TransactionIdIsValid(previousXid));
+
+        return previousXid;
+}
+/*
  * See txid.c
  */
 static bool
@@ -97,15 +131,17 @@ pg_subtrans_infos(PG_FUNCTION_ARGS)
 	Tuplestorestate *tupstore;
 	MemoryContext   per_query_ctx;
 	MemoryContext   oldcontext;
-	Datum           values[5];
-	bool            nulls[5] = {0};
+	Datum           values[6];
+	bool            nulls[6] = {0};
 	TimestampTz ts;
 	bool            found = false;
+	int sublevel = -1;
 
 	/*
-	 * for commit_timestamp
+	 * for sub_level and commit_timestamp
 	 */
 	nulls[4]=true;
+	nulls[5]=true;
 
 	per_query_ctx = rsinfo->econtext->ecxt_per_query_memory;
 	oldcontext = MemoryContextSwitchTo(per_query_ctx);
@@ -127,7 +163,7 @@ pg_subtrans_infos(PG_FUNCTION_ARGS)
 		Assert(TransactionIdIsValid(xid));
 
 		parentxid = SubTransGetParent(xid);
-		topparentxid = SubTransGetTopmostTransaction(xid);
+		topparentxid = get_top_parent(xid, &sublevel);
 
 		if (!TransactionIdIsValid(parentxid))
 			nulls[2]=true;
@@ -136,8 +172,11 @@ pg_subtrans_infos(PG_FUNCTION_ARGS)
 
 		if (!TransactionIdIsValid(topparentxid) || topparentxid == xid)
 			nulls[3]=true;
-		else
+		else {
 			values[3]=topparentxid;
+			values[4]=sublevel;
+			nulls[4]=false;
+		}
 
 		if (TransactionIdIsCurrentTransactionId(xid))
 			status = "in progress";
@@ -146,8 +185,8 @@ pg_subtrans_infos(PG_FUNCTION_ARGS)
 			if (track_commit_timestamp)
 				found = TransactionIdGetCommitTsData(xid, &ts, NULL);
 			if (found) {
-				values[4]=TimestampTzGetDatum(ts);
-				nulls[4]=false;
+				values[5]=TimestampTzGetDatum(ts);
+				nulls[5]=false;
 			}
 		}
 		else if (TransactionIdDidAbort(xid))
@@ -183,6 +222,7 @@ pg_subtrans_infos(PG_FUNCTION_ARGS)
 		nulls[2]=true;
 		nulls[3]=true;
 		nulls[4]=true;
+		nulls[5]=true;
 	}
 	else
 		values[1]=CStringGetTextDatum(status);
