@@ -55,11 +55,16 @@ get_top_parent(TransactionId xid, int *sublevel)
 static bool
 TransactionIdInRecentPast(uint64 xid_with_epoch, TransactionId *extracted_xid)
 {
+#if PG_VERSION_NUM >= 130000
+	FullTransactionId fxid = FullTransactionIdFromU64(xid_with_epoch);
+	uint32		xid_epoch = EpochFromFullTransactionId(fxid);
+	TransactionId xid = XidFromFullTransactionId(fxid);
+#else
 	uint32		xid_epoch = (uint32) (xid_with_epoch >> 32);
 	TransactionId xid = (TransactionId) xid_with_epoch;
+#endif
 	uint32		now_epoch;
 	TransactionId now_epoch_next_xid;
-
 #if PG_VERSION_NUM >= 120000
 	FullTransactionId now_fullxid;
 	now_fullxid = ReadNextFullTransactionId();
@@ -80,12 +85,18 @@ TransactionIdInRecentPast(uint64 xid_with_epoch, TransactionId *extracted_xid)
 		return true;
 
 	/* If the transaction ID is in the future, throw an error. */
-#if PG_VERSION_NUM >= 120000
+#if PG_VERSION_NUM >= 130000
+	if (!FullTransactionIdPrecedes(fxid, now_fullxid))
+		ereport(ERROR,
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("transaction ID %s is in the future",
+					psprintf(UINT64_FORMAT, U64FromFullTransactionId(fxid)))));
+#elif PG_VERSION_NUM >= 120000
 	if (xid_with_epoch >= U64FromFullTransactionId(now_fullxid))
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("transaction ID %s is in the future",
-						psprintf(UINT64_FORMAT, xid_with_epoch))));
+			(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				errmsg("transaction ID %s is in the future",
+					psprintf(UINT64_FORMAT, xid_with_epoch))));
 #else
 	if (xid_epoch > now_epoch
 		|| (xid_epoch == now_epoch && xid >= now_epoch_next_xid))
@@ -102,7 +113,11 @@ TransactionIdInRecentPast(uint64 xid_with_epoch, TransactionId *extracted_xid)
 	 * returned XID.  If we took and released the lock within this function, a
 	 * CLOG truncation could occur before the caller finished with the XID.
 	 */
+#if PG_VERSION_NUM >= 130000
+	Assert(LWLockHeldByMe(XactTruncationLock));
+#else
 	Assert(LWLockHeldByMe(CLogTruncationLock));
+#endif
 
 	/*
 	 * If the transaction ID has wrapped around, it's definitely too old to
@@ -121,7 +136,6 @@ TransactionIdInRecentPast(uint64 xid_with_epoch, TransactionId *extracted_xid)
 Datum 
 pg_subtrans_infos(PG_FUNCTION_ARGS)
 {
-	uint64          xid_with_epoch = PG_GETARG_INT64(0);
 	TransactionId xid;
 	TransactionId parentxid;
 	TransactionId topparentxid;
@@ -136,6 +150,21 @@ pg_subtrans_infos(PG_FUNCTION_ARGS)
 	TimestampTz ts;
 	bool            found = false;
 	int sublevel = -1;
+	uint64 FullTransactionXmin;
+	uint64 xid_with_epoch;
+#if PG_VERSION_NUM >= 120000
+	FullTransactionId now_fullxid = ReadNextFullTransactionId();
+	uint32 now_epoch = EpochFromFullTransactionId(now_fullxid);
+#else
+	uint32		now_epoch;
+	TransactionId now_epoch_next_xid;
+	GetNextXidAndEpoch(&now_epoch_next_xid, &now_epoch);
+#endif
+	FullTransactionXmin = (((uint64) now_epoch) << 32 | TransactionXmin);
+	xid_with_epoch = (((uint64) now_epoch) << 32 | PG_GETARG_INT64(0));
+
+	if (xid_with_epoch < FullTransactionXmin)
+		ereport(ERROR,(errmsg("transaction ID needs to be >= %s", psprintf(UINT64_FORMAT, FullTransactionXmin))));
 
 	/*
 	 * for sub_level and commit_timestamp
@@ -157,7 +186,11 @@ pg_subtrans_infos(PG_FUNCTION_ARGS)
 	rsinfo->setDesc = tupdesc;
 	MemoryContextSwitchTo(oldcontext);
 
+#if PG_VERSION_NUM >= 130000
+	LWLockAcquire(XactTruncationLock, LW_SHARED);
+#else
 	LWLockAcquire(CLogTruncationLock, LW_SHARED);
+#endif
 	if (TransactionIdInRecentPast(xid_with_epoch, &xid))
 	{
 		Assert(TransactionIdIsValid(xid));
@@ -215,7 +248,11 @@ pg_subtrans_infos(PG_FUNCTION_ARGS)
 		status = NULL;
 	}
 
+#if PG_VERSION_NUM >= 130000
+	LWLockRelease(XactTruncationLock);
+#else
 	LWLockRelease(CLogTruncationLock);
+#endif
 
 	if (status == NULL) {
 		nulls[1]=true;
