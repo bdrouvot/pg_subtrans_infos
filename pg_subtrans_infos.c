@@ -150,7 +150,9 @@ pg_subtrans_infos(PG_FUNCTION_ARGS)
 	TimestampTz ts;
 	bool            found = false;
 	int sublevel = -1;
+#ifdef USE_ASSERT_CHECKING
 	uint64 FullTransactionXmin;
+#endif
 	uint64 xid_with_epoch;
 #if PG_VERSION_NUM >= 120000
 	FullTransactionId now_fullxid = ReadNextFullTransactionId();
@@ -160,11 +162,13 @@ pg_subtrans_infos(PG_FUNCTION_ARGS)
 	TransactionId now_epoch_next_xid;
 	GetNextXidAndEpoch(&now_epoch_next_xid, &now_epoch);
 #endif
-	FullTransactionXmin = (((uint64) now_epoch) << 32 | TransactionXmin);
 	xid_with_epoch = (((uint64) now_epoch) << 32 | PG_GETARG_INT64(0));
 
+#ifdef USE_ASSERT_CHECKING
+	FullTransactionXmin = (((uint64) now_epoch) << 32 | TransactionXmin);
 	if (xid_with_epoch < FullTransactionXmin)
 		ereport(ERROR,(errmsg("transaction ID needs to be >= %s", psprintf(UINT64_FORMAT, FullTransactionXmin))));
+#endif
 
 	/*
 	 * for sub_level and commit_timestamp
